@@ -1,0 +1,301 @@
+import {RouteProp} from '@react-navigation/native';
+import {NativeStackNavigationProp} from '@react-navigation/native-stack';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import {
+  getMessages,
+  getSession,
+  interruptSession,
+  Message,
+  postMessage,
+} from '../api/factoryApi';
+import {MessageBubble} from '../components/MessageBubble';
+import {RootStackParamList} from '../navigation/AppNavigator';
+import {useStore} from '../store/useStore';
+
+type Props = {
+  navigation: NativeStackNavigationProp<RootStackParamList, 'Chat'>;
+  route: RouteProp<RootStackParamList, 'Chat'>;
+};
+
+const POLL_INTERVAL_MS = 3000;
+
+function mergeMessages(existing: Message[], incoming: Message[]): Message[] {
+  const map = new Map(existing.map(m => [m.id, m]));
+  for (const m of incoming) {
+    map.set(m.id, m);
+  }
+  return Array.from(map.values()).sort((a, b) => a.createdAt - b.createdAt);
+}
+
+function StopButton({onPress}: {onPress: () => void}) {
+  return (
+    <TouchableOpacity onPress={onPress} style={styles.headerBtn}>
+      <Text style={styles.headerBtnText}>Stop</Text>
+    </TouchableOpacity>
+  );
+}
+
+export function ChatScreen({navigation, route}: Props) {
+  const {sessionId, title} = route.params;
+  const {apiKey} = useStore();
+
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [text, setText] = useState('');
+  const [sessionStatus, setSessionStatus] = useState(route.params.status);
+
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
+  const fetchMessages = useCallback(async () => {
+    try {
+      const data = await getMessages(apiKey, sessionId);
+      const merged = mergeMessages([], data.messages);
+      setMessages(merged);
+      messagesRef.current = merged;
+
+      if (data.pagination.hasMore) {
+        let cursor = data.pagination.nextCursor;
+        while (cursor) {
+          const more = await getMessages(apiKey, sessionId, cursor);
+          const next = mergeMessages(messagesRef.current, more.messages);
+          setMessages(next);
+          messagesRef.current = next;
+          cursor = more.pagination.hasMore ? more.pagination.nextCursor : null;
+        }
+      }
+    } catch {
+      // silent fail on poll
+    }
+  }, [apiKey, sessionId]);
+
+  const checkStatus = useCallback(async () => {
+    try {
+      const session = await getSession(apiKey, sessionId);
+      setSessionStatus(session.status);
+      await fetchMessages();
+      if (session.status === 'idle') {
+        stopPolling();
+      }
+    } catch {
+      // ignore
+    }
+  }, [apiKey, sessionId, fetchMessages, stopPolling]);
+
+  // Store latest checkStatus in a ref so the interval always uses it
+  const checkStatusRef = useRef(checkStatus);
+  useEffect(() => {
+    checkStatusRef.current = checkStatus;
+  }, [checkStatus]);
+
+  const startPolling = useCallback(() => {
+    if (pollRef.current) {
+      return;
+    }
+    pollRef.current = setInterval(
+      () => checkStatusRef.current(),
+      POLL_INTERVAL_MS,
+    );
+  }, []);
+
+  const handleInterrupt = useCallback(async () => {
+    try {
+      await interruptSession(apiKey, sessionId);
+      stopPolling();
+      setSessionStatus('idle');
+    } catch {
+      Alert.alert('Error', 'Failed to interrupt session.');
+    }
+  }, [apiKey, sessionId, stopPolling]);
+
+  useEffect(() => {
+    navigation.setOptions({
+      title: title || `Session ${sessionId.slice(0, 8)}`,
+      headerRight:
+        sessionStatus === 'running' || sessionStatus === 'pending'
+          ? () => <StopButton onPress={handleInterrupt} />
+          : undefined,
+    });
+  }, [navigation, sessionId, title, sessionStatus, handleInterrupt]);
+
+  // Mount-only effect: initial fetch + start polling if needed
+  useEffect(() => {
+    setLoading(true);
+    fetchMessages().finally(() => setLoading(false));
+    if (route.params.status !== 'idle') {
+      startPolling();
+    }
+    return stopPolling;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleSend() {
+    const trimmed = text.trim();
+    if (!trimmed || sending) {
+      return;
+    }
+    setSending(true);
+    setText('');
+    try {
+      const result = await postMessage(apiKey, sessionId, trimmed);
+      setSessionStatus(result.status as 'idle' | 'pending' | 'running');
+      await fetchMessages();
+      if (result.status !== 'idle') {
+        startPolling();
+      }
+    } catch (e: any) {
+      Alert.alert(
+        'Error',
+        e?.response?.data?.detail ?? 'Failed to send message.',
+      );
+      setText(trimmed);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const isThinking = sessionStatus === 'running' || sessionStatus === 'pending';
+
+  if (loading) {
+    return (
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color="#1565c0" />
+      </View>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.root}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={80}>
+      <FlatList
+        data={messages}
+        keyExtractor={m => m.id}
+        renderItem={({item}) => <MessageBubble message={item} />}
+        contentContainerStyle={styles.messageList}
+        ListFooterComponent={
+          isThinking ? (
+            <View style={styles.thinkingRow}>
+              <ActivityIndicator size="small" color="#888" />
+              <Text style={styles.thinkingText}>Droid is thinking...</Text>
+            </View>
+          ) : null
+        }
+      />
+      <View style={styles.inputBar}>
+        <TextInput
+          style={styles.textInput}
+          value={text}
+          onChangeText={setText}
+          placeholder="Message Droid..."
+          placeholderTextColor="#aaa"
+          multiline
+          maxLength={10000}
+          editable={!isThinking && !sending}
+        />
+        <TouchableOpacity
+          style={[
+            styles.sendBtn,
+            (!text.trim() || isThinking || sending) && styles.sendBtnDisabled,
+          ]}
+          onPress={handleSend}
+          disabled={!text.trim() || isThinking || sending}>
+          <Text style={styles.sendBtnText}>Send</Text>
+        </TouchableOpacity>
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#f8f9fa',
+  },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  messageList: {
+    paddingVertical: 12,
+    paddingBottom: 8,
+  },
+  thinkingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  thinkingText: {
+    color: '#888',
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
+  inputBar: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    gap: 8,
+  },
+  textInput: {
+    flex: 1,
+    minHeight: 40,
+    maxHeight: 120,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: '#1a1a1a',
+  },
+  sendBtn: {
+    backgroundColor: '#1565c0',
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    justifyContent: 'center',
+  },
+  sendBtnDisabled: {
+    backgroundColor: '#b0bec5',
+  },
+  sendBtnText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+  headerBtn: {
+    paddingHorizontal: 12,
+  },
+  headerBtnText: {
+    color: '#c62828',
+    fontWeight: '600',
+    fontSize: 15,
+  },
+});
