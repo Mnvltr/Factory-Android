@@ -1,32 +1,39 @@
 import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
+import {StyleSheet, View} from 'react-native';
 
 type Status = 'idle' | 'pending' | 'running';
 
-const COLORS: Record<Status, {bg: string; text: string; label: string}> = {
-  idle: {bg: '#e8f5e9', text: '#2e7d32', label: 'Idle'},
-  pending: {bg: '#fff3e0', text: '#e65100', label: 'Pending'},
-  running: {bg: '#e3f2fd', text: '#1565c0', label: 'Running'},
+const DOT_COLORS: Record<Status, string> = {
+  idle: '#22c55e',
+  pending: '#f59e0b',
+  running: '#2563eb',
 };
 
-export function StatusBadge({status}: {status: Status}) {
-  const colors = COLORS[status] ?? COLORS.idle;
+export function StatusDot({
+  status,
+  size = 10,
+}: {
+  status: Status;
+  size?: number;
+}) {
   return (
-    <View style={[styles.badge, {backgroundColor: colors.bg}]}>
-      <Text style={[styles.label, {color: colors.text}]}>{colors.label}</Text>
-    </View>
+    <View
+      style={[
+        styles.dot,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: DOT_COLORS[status] ?? DOT_COLORS.idle,
+        },
+      ]}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-    alignSelf: 'flex-start',
-  },
-  label: {
-    fontSize: 11,
-    fontWeight: '600',
+  dot: {
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.9)',
   },
 });

@@ -1,11 +1,19 @@
-import {NavigationContainer} from '@react-navigation/native';
+import {
+  NavigationContainer,
+  DefaultTheme,
+  DarkTheme,
+} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import React, {useEffect} from 'react';
 import {ActivityIndicator, StyleSheet, View} from 'react-native';
 import {useStore} from '../store/useStore';
+import {useThemeStore} from '../store/useThemeStore';
+import {useSettingsStore} from '../store/useSettingsStore';
 import {ApiKeyScreen} from '../screens/ApiKeyScreen';
 import {SessionsScreen} from '../screens/SessionsScreen';
 import {ChatScreen} from '../screens/ChatScreen';
+import {NewSessionScreen} from '../screens/NewSessionScreen';
+import {SettingsScreen} from '../screens/SettingsScreen';
 
 export type RootStackParamList = {
   ApiKey: undefined;
@@ -15,33 +23,66 @@ export type RootStackParamList = {
     title?: string;
     status: 'idle' | 'pending' | 'running';
   };
+  NewSession: undefined;
+  Settings: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function AppNavigator() {
   const {apiKey, loadApiKey} = useStore();
+  const theme = useThemeStore();
+  const settingsStore = useSettingsStore();
   const [ready, setReady] = React.useState(false);
 
   useEffect(() => {
-    loadApiKey().finally(() => setReady(true));
-  }, [loadApiKey]);
+    Promise.all([loadApiKey(), theme.load(), settingsStore.load()]).finally(
+      () => setReady(true),
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const navTheme = theme.isDark
+    ? {
+        ...DarkTheme,
+        colors: {
+          ...DarkTheme.colors,
+          background: theme.palette.bg,
+          card: theme.palette.headerBg,
+          text: theme.palette.headerText,
+          border: theme.palette.border,
+          primary: theme.palette.accent,
+        },
+      }
+    : {
+        ...DefaultTheme,
+        colors: {
+          ...DefaultTheme.colors,
+          background: theme.palette.bg,
+          card: theme.palette.headerBg,
+          text: theme.palette.headerText,
+          border: theme.palette.border,
+          primary: theme.palette.accent,
+        },
+      };
 
   if (!ready) {
     return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#1565c0" />
+      <View style={[styles.loading, {backgroundColor: theme.palette.bg}]}>
+        <ActivityIndicator size="large" color={theme.palette.accent} />
       </View>
     );
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navTheme}>
       <Stack.Navigator
         screenOptions={{
-          headerStyle: {backgroundColor: '#1565c0'},
-          headerTintColor: '#fff',
+          headerStyle: {backgroundColor: theme.palette.headerBg},
+          headerTintColor: theme.palette.headerText,
           headerTitleStyle: {fontWeight: '700'},
+          headerShadowVisible: false,
+          headerBackTitleVisible: false,
         }}>
         {!apiKey ? (
           <Stack.Screen
@@ -54,9 +95,19 @@ export function AppNavigator() {
             <Stack.Screen
               name="Sessions"
               component={SessionsScreen}
-              options={{title: 'Factory Sessions'}}
+              options={{title: 'Factory'}}
             />
             <Stack.Screen name="Chat" component={ChatScreen} />
+            <Stack.Screen
+              name="NewSession"
+              component={NewSessionScreen}
+              options={{title: 'New Session'}}
+            />
+            <Stack.Screen
+              name="Settings"
+              component={SettingsScreen}
+              options={{title: 'Settings'}}
+            />
           </>
         )}
       </Stack.Navigator>

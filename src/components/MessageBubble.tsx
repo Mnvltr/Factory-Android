@@ -1,7 +1,8 @@
-import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
+import React, {useState} from 'react';
+import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import {ContentBlock, Message} from '../api/factoryApi';
+import {useThemeStore} from '../store/useThemeStore';
 
 function extractText(blocks: ContentBlock[]): string {
   return blocks
@@ -10,19 +11,35 @@ function extractText(blocks: ContentBlock[]): string {
     .join('\n');
 }
 
-function ToolRow({block}: {block: ContentBlock}) {
+function ToolRow({block, palette}: {block: ContentBlock; palette: any}) {
+  const [expanded, setExpanded] = useState(false);
   const label =
-    block.type === 'tool_use'
-      ? `Tool: ${block.name ?? 'unknown'}`
-      : 'Tool result';
+    block.type === 'tool_use' ? `> ${block.name ?? 'tool'}` : '< result';
+
   return (
-    <View style={styles.toolRow}>
-      <Text style={styles.toolText}>{label}</Text>
-    </View>
+    <TouchableOpacity
+      style={[
+        styles.toolRow,
+        {backgroundColor: palette.toolBg, borderLeftColor: palette.toolBorder},
+      ]}
+      onPress={() => setExpanded(!expanded)}
+      activeOpacity={0.7}>
+      <Text style={[styles.toolText, {color: palette.textTertiary}]}>
+        {label}
+      </Text>
+      {expanded && block.type === 'tool_use' && block.input && (
+        <Text
+          style={[styles.toolDetail, {color: palette.textTertiary}]}
+          numberOfLines={6}>
+          {JSON.stringify(block.input, null, 2)}
+        </Text>
+      )}
+    </TouchableOpacity>
   );
 }
 
 export function MessageBubble({message}: {message: Message}) {
+  const {palette, fonts} = useThemeStore();
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
 
@@ -36,7 +53,7 @@ export function MessageBubble({message}: {message: Message}) {
       return (
         <View style={styles.toolContainer}>
           {toolBlocks.map((b, i) => (
-            <ToolRow key={i} block={b} />
+            <ToolRow key={i} block={b} palette={palette} />
           ))}
         </View>
       );
@@ -50,6 +67,35 @@ export function MessageBubble({message}: {message: Message}) {
 
   const text = extractText(message.content);
 
+  const mdStyles = {
+    body: {
+      color: isUser ? palette.userBubbleText : palette.assistantBubbleText,
+      fontSize: fonts.body,
+      lineHeight: fonts.body * 1.45,
+    },
+    code_inline: {
+      backgroundColor: isUser
+        ? 'rgba(255,255,255,0.2)'
+        : palette.surfaceSecondary,
+      fontFamily: 'monospace',
+      fontSize: fonts.body - 2,
+      borderRadius: 4,
+      paddingHorizontal: 5,
+    },
+    fence: {
+      backgroundColor: '#1e1e2e',
+      borderRadius: 10,
+      padding: 12,
+      marginVertical: 6,
+    },
+    code_block: {
+      color: '#cdd6f4',
+      fontFamily: 'monospace',
+      fontSize: fonts.body - 2,
+    },
+    link: {color: isUser ? '#93c5fd' : palette.accent},
+  };
+
   return (
     <View
       style={[
@@ -59,7 +105,7 @@ export function MessageBubble({message}: {message: Message}) {
       {toolBlocks.length > 0 && (
         <View style={styles.toolContainer}>
           {toolBlocks.map((b, i) => (
-            <ToolRow key={i} block={b} />
+            <ToolRow key={i} block={b} palette={palette} />
           ))}
         </View>
       )}
@@ -67,12 +113,28 @@ export function MessageBubble({message}: {message: Message}) {
         <View
           style={[
             styles.bubble,
-            isUser ? styles.userBubble : styles.assistantBubble,
+            isUser
+              ? [styles.userBubble, {backgroundColor: palette.userBubble}]
+              : [
+                  styles.assistantBubble,
+                  {
+                    backgroundColor: palette.assistantBubble,
+                    borderColor: palette.border,
+                    borderWidth: StyleSheet.hairlineWidth,
+                  },
+                ],
           ]}>
           {isAssistant ? (
-            <Markdown style={markdownStyles}>{text}</Markdown>
+            <Markdown style={mdStyles}>{text}</Markdown>
           ) : (
-            <Text style={styles.userText}>{text}</Text>
+            <Text
+              style={{
+                color: palette.userBubbleText,
+                fontSize: fonts.body,
+                lineHeight: fonts.body * 1.45,
+              }}>
+              {text}
+            </Text>
           )}
         </View>
       )}
@@ -82,7 +144,7 @@ export function MessageBubble({message}: {message: Message}) {
 
 const styles = StyleSheet.create({
   container: {
-    marginVertical: 4,
+    marginVertical: 3,
     marginHorizontal: 12,
     maxWidth: '85%',
   },
@@ -93,65 +155,34 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   bubble: {
-    borderRadius: 16,
+    borderRadius: 18,
     paddingHorizontal: 14,
     paddingVertical: 10,
   },
   userBubble: {
-    backgroundColor: '#1565c0',
-    borderBottomRightRadius: 4,
+    borderBottomRightRadius: 6,
   },
   assistantBubble: {
-    backgroundColor: '#f0f0f0',
-    borderBottomLeftRadius: 4,
-  },
-  userText: {
-    color: '#fff',
-    fontSize: 15,
-    lineHeight: 21,
+    borderBottomLeftRadius: 6,
   },
   toolContainer: {
     marginHorizontal: 12,
     marginVertical: 2,
   },
   toolRow: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 6,
+    borderRadius: 8,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     marginVertical: 1,
     borderLeftWidth: 3,
-    borderLeftColor: '#ccc',
   },
   toolText: {
     fontSize: 12,
-    color: '#666',
     fontFamily: 'monospace',
   },
-});
-
-const markdownStyles = StyleSheet.create({
-  body: {
-    color: '#1a1a1a',
-    fontSize: 15,
-    lineHeight: 21,
-  },
-  code_inline: {
-    backgroundColor: '#e0e0e0',
+  toolDetail: {
+    fontSize: 11,
     fontFamily: 'monospace',
-    fontSize: 13,
-    borderRadius: 3,
-    paddingHorizontal: 4,
-  },
-  fence: {
-    backgroundColor: '#272822',
-    borderRadius: 8,
-    padding: 12,
-    marginVertical: 6,
-  },
-  code_block: {
-    color: '#f8f8f2',
-    fontFamily: 'monospace',
-    fontSize: 13,
+    marginTop: 4,
   },
 });

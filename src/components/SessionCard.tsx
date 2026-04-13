@@ -1,35 +1,74 @@
 import React from 'react';
 import {StyleSheet, Text, TouchableOpacity, View} from 'react-native';
 import {Session} from '../api/factoryApi';
-import {StatusBadge} from './StatusBadge';
+import {StatusDot} from './StatusBadge';
+import {useThemeStore} from '../store/useThemeStore';
 
 interface Props {
   session: Session;
   onPress: () => void;
 }
 
-function formatDate(ms: number): string {
+function timeAgo(ms: number): string {
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) {
+    return 'now';
+  }
+  if (mins < 60) {
+    return `${mins}m`;
+  }
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) {
+    return `${hrs}h`;
+  }
+  const days = Math.floor(hrs / 24);
+  if (days < 7) {
+    return `${days}d`;
+  }
   return new Date(ms).toLocaleDateString(undefined, {
     month: 'short',
     day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
   });
 }
 
 export function SessionCard({session, onPress}: Props) {
+  const {palette, fonts} = useThemeStore();
   const title = session.title || `Session ${session.sessionId.slice(0, 8)}`;
+  const initial = title.charAt(0).toUpperCase();
+
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.7}>
-      <View style={styles.row}>
-        <Text style={styles.title} numberOfLines={1}>
-          {title}
-        </Text>
-        <StatusBadge status={session.status} />
+    <TouchableOpacity
+      style={[styles.card, {borderBottomColor: palette.border}]}
+      onPress={onPress}
+      activeOpacity={0.6}>
+      <View style={[styles.avatar, {backgroundColor: palette.accent}]}>
+        <Text style={styles.avatarText}>{initial}</Text>
       </View>
-      <View style={styles.meta}>
-        <Text style={styles.metaText}>{session.messageCount} messages</Text>
-        <Text style={styles.metaText}>{formatDate(session.updatedAt)}</Text>
+      <View style={styles.content}>
+        <View style={styles.topRow}>
+          <Text
+            style={[styles.title, {color: palette.text, fontSize: fonts.body}]}
+            numberOfLines={1}>
+            {title}
+          </Text>
+          <Text style={[styles.time, {color: palette.textTertiary}]}>
+            {timeAgo(session.updatedAt)}
+          </Text>
+        </View>
+        <View style={styles.bottomRow}>
+          <Text
+            style={[
+              styles.preview,
+              {color: palette.textSecondary, fontSize: fonts.body - 2},
+            ]}
+            numberOfLines={1}>
+            {session.messageCount > 0
+              ? `${session.messageCount} messages`
+              : 'No messages yet'}
+          </Text>
+          <StatusDot status={session.status} size={9} />
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -37,36 +76,49 @@ export function SessionCard({session, onPress}: Props) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#fff',
-    marginHorizontal: 16,
-    marginVertical: 6,
-    padding: 14,
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    elevation: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  row: {
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  avatarText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  content: {
+    flex: 1,
+  },
+  topRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
+    marginBottom: 4,
   },
   title: {
-    fontSize: 15,
     fontWeight: '600',
-    color: '#1a1a1a',
     flex: 1,
+    marginRight: 8,
   },
-  meta: {
+  time: {
+    fontSize: 12,
+  },
+  bottomRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 6,
+    alignItems: 'center',
   },
-  metaText: {
-    fontSize: 12,
-    color: '#888',
+  preview: {
+    flex: 1,
+    marginRight: 8,
   },
 });

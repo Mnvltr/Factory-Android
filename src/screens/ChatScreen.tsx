@@ -23,6 +23,7 @@ import {
 import {MessageBubble} from '../components/MessageBubble';
 import {RootStackParamList} from '../navigation/AppNavigator';
 import {useStore} from '../store/useStore';
+import {useThemeStore} from '../store/useThemeStore';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Chat'>;
@@ -39,10 +40,10 @@ function mergeMessages(existing: Message[], incoming: Message[]): Message[] {
   return Array.from(map.values()).sort((a, b) => a.createdAt - b.createdAt);
 }
 
-function StopButton({onPress}: {onPress: () => void}) {
+function StopButton({onPress, color}: {onPress: () => void; color: string}) {
   return (
     <TouchableOpacity onPress={onPress} style={styles.headerBtn}>
-      <Text style={styles.headerBtnText}>Stop</Text>
+      <Text style={[styles.headerBtnText, {color}]}>Stop</Text>
     </TouchableOpacity>
   );
 }
@@ -50,6 +51,7 @@ function StopButton({onPress}: {onPress: () => void}) {
 export function ChatScreen({navigation, route}: Props) {
   const {sessionId, title} = route.params;
   const {apiKey} = useStore();
+  const {palette} = useThemeStore();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -102,7 +104,6 @@ export function ChatScreen({navigation, route}: Props) {
     }
   }, [apiKey, sessionId, fetchMessages, stopPolling]);
 
-  // Store latest checkStatus in a ref so the interval always uses it
   const checkStatusRef = useRef(checkStatus);
   useEffect(() => {
     checkStatusRef.current = checkStatus;
@@ -133,12 +134,13 @@ export function ChatScreen({navigation, route}: Props) {
       title: title || `Session ${sessionId.slice(0, 8)}`,
       headerRight:
         sessionStatus === 'running' || sessionStatus === 'pending'
-          ? () => <StopButton onPress={handleInterrupt} />
+          ? () => (
+              <StopButton onPress={handleInterrupt} color={palette.danger} />
+            )
           : undefined,
     });
-  }, [navigation, sessionId, title, sessionStatus, handleInterrupt]);
+  }, [navigation, sessionId, title, sessionStatus, handleInterrupt, palette]);
 
-  // Mount-only effect: initial fetch + start polling if needed
   useEffect(() => {
     setLoading(true);
     fetchMessages().finally(() => setLoading(false));
@@ -148,6 +150,21 @@ export function ChatScreen({navigation, route}: Props) {
     return stopPolling;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function formatError(e: any): string {
+    const detail = e?.response?.data?.detail;
+    if (typeof detail === 'string') {
+      if (
+        detail.toLowerCase().includes('computer') ||
+        detail.toLowerCase().includes('sandbox') ||
+        detail.toLowerCase().includes('active')
+      ) {
+        return 'The connected computer is not active. Please start it from the Factory web app or CLI, then try again.';
+      }
+      return detail;
+    }
+    return 'Failed to send message. Check your connection and try again.';
+  }
 
   async function handleSend() {
     const trimmed = text.trim();
@@ -164,10 +181,7 @@ export function ChatScreen({navigation, route}: Props) {
         startPolling();
       }
     } catch (e: any) {
-      Alert.alert(
-        'Error',
-        e?.response?.data?.detail ?? 'Failed to send message.',
-      );
+      Alert.alert('Error', formatError(e));
       setText(trimmed);
     } finally {
       setSending(false);
@@ -178,15 +192,15 @@ export function ChatScreen({navigation, route}: Props) {
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#1565c0" />
+      <View style={[styles.center, {backgroundColor: palette.bg}]}>
+        <ActivityIndicator size="large" color={palette.accent} />
       </View>
     );
   }
 
   return (
     <KeyboardAvoidingView
-      style={styles.root}
+      style={[styles.root, {backgroundColor: palette.bg}]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={80}>
       <FlatList
@@ -194,22 +208,39 @@ export function ChatScreen({navigation, route}: Props) {
         keyExtractor={m => m.id}
         renderItem={({item}) => <MessageBubble message={item} />}
         contentContainerStyle={styles.messageList}
+        ListEmptyComponent={
+          <View style={styles.emptyChat}>
+            <Text style={[styles.emptyChatText, {color: palette.textTertiary}]}>
+              Send a message to start the conversation
+            </Text>
+          </View>
+        }
         ListFooterComponent={
           isThinking ? (
             <View style={styles.thinkingRow}>
-              <ActivityIndicator size="small" color="#888" />
-              <Text style={styles.thinkingText}>Droid is thinking...</Text>
+              <ActivityIndicator size="small" color={palette.accent} />
+              <Text
+                style={[styles.thinkingText, {color: palette.textSecondary}]}>
+                Droid is thinking...
+              </Text>
             </View>
           ) : null
         }
       />
-      <View style={styles.inputBar}>
+      <View
+        style={[
+          styles.inputBar,
+          {backgroundColor: palette.surface, borderTopColor: palette.border},
+        ]}>
         <TextInput
-          style={styles.textInput}
+          style={[
+            styles.textInput,
+            {backgroundColor: palette.inputBg, color: palette.text},
+          ]}
           value={text}
           onChangeText={setText}
           placeholder="Message Droid..."
-          placeholderTextColor="#aaa"
+          placeholderTextColor={palette.textTertiary}
           multiline
           maxLength={10000}
           editable={!isThinking && !sending}
@@ -217,11 +248,25 @@ export function ChatScreen({navigation, route}: Props) {
         <TouchableOpacity
           style={[
             styles.sendBtn,
-            (!text.trim() || isThinking || sending) && styles.sendBtnDisabled,
+            {backgroundColor: palette.accent},
+            (!text.trim() || isThinking || sending) && {
+              backgroundColor: palette.surfaceSecondary,
+            },
           ]}
           onPress={handleSend}
           disabled={!text.trim() || isThinking || sending}>
-          <Text style={styles.sendBtnText}>Send</Text>
+          <Text
+            style={[
+              styles.sendBtnText,
+              {
+                color:
+                  !text.trim() || isThinking || sending
+                    ? palette.textTertiary
+                    : '#fff',
+              },
+            ]}>
+            {'\u2191'}
+          </Text>
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
@@ -231,7 +276,6 @@ export function ChatScreen({navigation, route}: Props) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#f8f9fa',
   },
   center: {
     flex: 1,
@@ -242,6 +286,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingBottom: 8,
   },
+  emptyChat: {
+    alignItems: 'center',
+    paddingTop: 60,
+  },
+  emptyChatText: {
+    fontSize: 14,
+    fontStyle: 'italic',
+  },
   thinkingRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -250,7 +302,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   thinkingText: {
-    color: '#888',
     fontSize: 14,
     fontStyle: 'italic',
   },
@@ -259,42 +310,33 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: '#fff',
-    borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
+    borderTopWidth: StyleSheet.hairlineWidth,
     gap: 8,
   },
   textInput: {
     flex: 1,
     minHeight: 40,
     maxHeight: 120,
-    backgroundColor: '#f0f0f0',
     borderRadius: 20,
     paddingHorizontal: 16,
     paddingVertical: 10,
     fontSize: 15,
-    color: '#1a1a1a',
   },
   sendBtn: {
-    backgroundColor: '#1565c0',
-    borderRadius: 20,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     justifyContent: 'center',
-  },
-  sendBtnDisabled: {
-    backgroundColor: '#b0bec5',
+    alignItems: 'center',
   },
   sendBtnText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 15,
+    fontSize: 18,
+    fontWeight: '700',
   },
   headerBtn: {
     paddingHorizontal: 12,
   },
   headerBtnText: {
-    color: '#c62828',
     fontWeight: '600',
     fontSize: 15,
   },

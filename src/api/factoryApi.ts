@@ -9,6 +9,22 @@ function client(apiKey: string) {
   });
 }
 
+export interface Computer {
+  id: string;
+  name: string;
+  hostname?: string;
+  providerType: 'byom' | 'e2b';
+  status?: 'provisioning' | 'active' | 'error';
+  createdAt: number;
+}
+
+export interface SessionSettings {
+  model?: string;
+  reasoningEffort?: string;
+  interactionMode?: string;
+  autonomyLevel?: string;
+}
+
 export interface Session {
   sessionId: string;
   title?: string;
@@ -18,6 +34,7 @@ export interface Session {
   updatedAt: number;
   completedAt?: number;
   computerId?: string;
+  sessionSettings?: SessionSettings;
 }
 
 export interface ContentBlock {
@@ -56,6 +73,13 @@ export interface PaginatedMessages {
   pagination: {hasMore: boolean; nextCursor: string | null};
 }
 
+export async function listComputers(
+  apiKey: string,
+): Promise<{computers: Computer[]}> {
+  const res = await client(apiKey).get('/computers');
+  return res.data;
+}
+
 export async function listSessions(
   apiKey: string,
   cursor?: string,
@@ -73,6 +97,30 @@ export async function getSession(
   sessionId: string,
 ): Promise<Session> {
   const res = await client(apiKey).get(`/sessions/${sessionId}`);
+  return res.data;
+}
+
+export async function createSession(
+  apiKey: string,
+  computerId: string,
+  sessionSettings?: SessionSettings,
+): Promise<Session> {
+  const body: Record<string, unknown> = {computerId};
+  if (sessionSettings) {
+    body.sessionSettings = sessionSettings;
+  }
+  const res = await client(apiKey).post('/sessions', body);
+  return res.data;
+}
+
+export async function updateSession(
+  apiKey: string,
+  sessionId: string,
+  sessionSettings: SessionSettings,
+): Promise<Session> {
+  const res = await client(apiKey).patch(`/sessions/${sessionId}`, {
+    sessionSettings,
+  });
   return res.data;
 }
 
