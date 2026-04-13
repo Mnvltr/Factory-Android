@@ -156,3 +156,10 @@ export async function interruptSession(
 ): Promise<void> {
   await client(apiKey).post(`/sessions/${sessionId}/interrupt`);
 }
+
+export async function restartComputer(
+  apiKey: string,
+  computerId: string,
+): Promise<void> {
+  await client(apiKey).post(`/computers/${computerId}/restart`);
+}

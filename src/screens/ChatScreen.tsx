@@ -19,6 +19,7 @@ import {
   interruptSession,
   Message,
   postMessage,
+  restartComputer,
 } from '../api/factoryApi';
 import {MessageBubble} from '../components/MessageBubble';
 import {RootStackParamList} from '../navigation/AppNavigator';
@@ -58,6 +59,8 @@ export function ChatScreen({navigation, route}: Props) {
   const [sending, setSending] = useState(false);
   const [text, setText] = useState('');
   const [sessionStatus, setSessionStatus] = useState(route.params.status);
+  const [computerId, setComputerId] = useState<string | undefined>(undefined);
+  const [restarting, setRestarting] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const messagesRef = useRef<Message[]>([]);
@@ -143,7 +146,10 @@ export function ChatScreen({navigation, route}: Props) {
 
   useEffect(() => {
     setLoading(true);
-    fetchMessages().finally(() => setLoading(false));
+    Promise.all([
+      fetchMessages(),
+      getSession(apiKey, sessionId).then(s => setComputerId(s.computerId)),
+    ]).finally(() => setLoading(false));
     if (route.params.status !== 'idle') {
       startPolling();
     }
@@ -151,44 +157,92 @@ export function ChatScreen({navigation, route}: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function formatError(e: any): string {
+  function isComputerError(e: any): boolean {
     const detail = e?.response?.data?.detail;
-    if (typeof detail === 'string') {
-      if (
-        detail.toLowerCase().includes('computer') ||
-        detail.toLowerCase().includes('sandbox') ||
-        detail.toLowerCase().includes('active')
-      ) {
-        return 'The connected computer is not active. Please start it from the Factory web app or CLI, then try again.';
-      }
-      return detail;
+    if (typeof detail !== 'string') {
+      return false;
     }
-    return 'Failed to send message. Check your connection and try again.';
+    const lower = detail.toLowerCase();
+    return (
+      lower.includes('computer') ||
+      lower.includes('sandbox') ||
+      lower.includes('not active') ||
+      lower.includes('not running') ||
+      lower.includes('paused')
+    );
   }
 
-  async function handleSend() {
-    const trimmed = text.trim();
-    if (!trimmed || sending) {
+  async function handleRestart(pendingText?: string) {
+    if (!computerId) {
+      Alert.alert(
+        'Error',
+        'No computer is connected to this session. Create a new session from the sessions list.',
+      );
       return;
     }
-    setSending(true);
-    setText('');
+    setRestarting(true);
     try {
-      const result = await postMessage(apiKey, sessionId, trimmed);
+      await restartComputer(apiKey, computerId);
+      // Give the computer a moment to come up
+      await new Promise(r => setTimeout(r, 3000));
+      if (pendingText) {
+        await sendMessage(pendingText);
+      }
+    } catch (e: any) {
+      Alert.alert(
+        'Restart Failed',
+        e?.response?.data?.detail ??
+          'Could not restart the computer. Try from the Factory web app.',
+      );
+    } finally {
+      setRestarting(false);
+    }
+  }
+
+  async function sendMessage(msg: string) {
+    try {
+      const result = await postMessage(apiKey, sessionId, msg);
       setSessionStatus(result.status as 'idle' | 'pending' | 'running');
       await fetchMessages();
       if (result.status !== 'idle') {
         startPolling();
       }
     } catch (e: any) {
-      Alert.alert('Error', formatError(e));
-      setText(trimmed);
-    } finally {
-      setSending(false);
+      if (isComputerError(e)) {
+        Alert.alert(
+          'Computer Not Active',
+          'The computer connected to this session is paused. Would you like to restart it and resend?',
+          [
+            {text: 'Cancel', style: 'cancel', onPress: () => setText(msg)},
+            {text: 'Restart & Send', onPress: () => handleRestart(msg)},
+          ],
+        );
+      } else {
+        const detail = e?.response?.data?.detail;
+        Alert.alert(
+          'Error',
+          typeof detail === 'string'
+            ? detail
+            : 'Failed to send message. Check your connection and try again.',
+        );
+        setText(msg);
+      }
     }
   }
 
-  const isThinking = sessionStatus === 'running' || sessionStatus === 'pending';
+  async function handleSend() {
+    const trimmed = text.trim();
+    if (!trimmed || sending || restarting) {
+      return;
+    }
+    setSending(true);
+    setText('');
+    await sendMessage(trimmed);
+    setSending(false);
+  }
+
+  const isThinking =
+    sessionStatus === 'running' || sessionStatus === 'pending' || restarting;
 
   if (loading) {
     return (
@@ -221,7 +275,7 @@ export function ChatScreen({navigation, route}: Props) {
               <ActivityIndicator size="small" color={palette.accent} />
               <Text
                 style={[styles.thinkingText, {color: palette.textSecondary}]}>
-                Droid is thinking...
+                {restarting ? 'Restarting computer...' : 'Droid is thinking...'}
               </Text>
             </View>
           ) : null
