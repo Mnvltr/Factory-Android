@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import {
+  getComputer,
   getMessages,
   getSession,
   interruptSession,
@@ -157,76 +158,41 @@ export function ChatScreen({navigation, route}: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function isComputerError(e: any): boolean {
-    const detail = e?.response?.data?.detail;
-    if (typeof detail !== 'string') {
-      return false;
-    }
-    const lower = detail.toLowerCase();
-    return (
-      lower.includes('computer') ||
-      lower.includes('sandbox') ||
-      lower.includes('not active') ||
-      lower.includes('not running') ||
-      lower.includes('paused')
-    );
-  }
-
-  async function handleRestart(pendingText?: string) {
+  async function ensureComputerRunning(): Promise<boolean> {
     if (!computerId) {
-      Alert.alert(
-        'Error',
-        'No computer is connected to this session. Create a new session from the sessions list.',
-      );
-      return;
+      return true; // no computer to check, let the API fail naturally
     }
-    setRestarting(true);
     try {
-      await restartComputer(apiKey, computerId);
-      // Give the computer a moment to come up
-      await new Promise(r => setTimeout(r, 3000));
-      if (pendingText) {
-        await sendMessage(pendingText);
+      const computer = await getComputer(apiKey, computerId);
+      if (computer.status === 'active') {
+        return true;
       }
-    } catch (e: any) {
+      // Try to restart it
+      setRestarting(true);
+      await restartComputer(apiKey, computerId);
+      // Poll computer status until active or timeout (30s)
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const updated = await getComputer(apiKey, computerId);
+        if (updated.status === 'active') {
+          return true;
+        }
+      }
       Alert.alert(
-        'Restart Failed',
-        e?.response?.data?.detail ??
-          'Could not restart the computer. Try from the Factory web app.',
+        'Timeout',
+        'Computer is still starting up. Please wait a moment and try again.',
       );
+      return false;
+    } catch (e: any) {
+      // Restart failed -- offer manual option
+      Alert.alert(
+        'Computer Not Ready',
+        e?.response?.data?.detail ??
+          'Could not restart the computer. Start it from the Factory web app or CLI, then try again.',
+      );
+      return false;
     } finally {
       setRestarting(false);
-    }
-  }
-
-  async function sendMessage(msg: string) {
-    try {
-      const result = await postMessage(apiKey, sessionId, msg);
-      setSessionStatus(result.status as 'idle' | 'pending' | 'running');
-      await fetchMessages();
-      if (result.status !== 'idle') {
-        startPolling();
-      }
-    } catch (e: any) {
-      if (isComputerError(e)) {
-        Alert.alert(
-          'Computer Not Active',
-          'The computer connected to this session is paused. Would you like to restart it and resend?',
-          [
-            {text: 'Cancel', style: 'cancel', onPress: () => setText(msg)},
-            {text: 'Restart & Send', onPress: () => handleRestart(msg)},
-          ],
-        );
-      } else {
-        const detail = e?.response?.data?.detail;
-        Alert.alert(
-          'Error',
-          typeof detail === 'string'
-            ? detail
-            : 'Failed to send message. Check your connection and try again.',
-        );
-        setText(msg);
-      }
     }
   }
 
@@ -237,8 +203,53 @@ export function ChatScreen({navigation, route}: Props) {
     }
     setSending(true);
     setText('');
-    await sendMessage(trimmed);
-    setSending(false);
+
+    // Ensure computer is active first
+    const ready = await ensureComputerRunning();
+    if (!ready) {
+      setText(trimmed);
+      setSending(false);
+      return;
+    }
+
+    try {
+      const result = await postMessage(apiKey, sessionId, trimmed);
+      setSessionStatus(result.status as 'idle' | 'pending' | 'running');
+      await fetchMessages();
+      if (result.status !== 'idle') {
+        startPolling();
+      }
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const detail = e?.response?.data?.detail;
+      if (status === 503 || status === 502) {
+        // Computer likely went down between check and send -- try restart
+        const retryReady = await ensureComputerRunning();
+        if (retryReady) {
+          try {
+            const result = await postMessage(apiKey, sessionId, trimmed);
+            setSessionStatus(result.status as 'idle' | 'pending' | 'running');
+            await fetchMessages();
+            if (result.status !== 'idle') {
+              startPolling();
+            }
+            setSending(false);
+            return;
+          } catch {
+            // fall through to generic error
+          }
+        }
+      }
+      Alert.alert(
+        'Error',
+        typeof detail === 'string'
+          ? detail
+          : 'Failed to send message. Check your connection and try again.',
+      );
+      setText(trimmed);
+    } finally {
+      setSending(false);
+    }
   }
 
   const isThinking =

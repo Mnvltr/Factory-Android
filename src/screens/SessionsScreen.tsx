@@ -1,4 +1,3 @@
-import {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import React, {useCallback, useEffect, useState} from 'react';
 import {
   ActivityIndicator,
@@ -13,10 +12,8 @@ import {listSessions, Session} from '../api/factoryApi';
 import {SessionCard} from '../components/SessionCard';
 import {useStore} from '../store/useStore';
 import {useThemeStore} from '../store/useThemeStore';
-import {RootStackParamList} from '../navigation/AppNavigator';
-
 type Props = {
-  navigation: NativeStackNavigationProp<RootStackParamList, 'Sessions'>;
+  navigation: any;
 };
 
 function GearButton({onPress, color}: {onPress: () => void; color: string}) {

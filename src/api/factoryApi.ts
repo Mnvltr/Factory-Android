@@ -157,6 +157,14 @@ export async function interruptSession(
   await client(apiKey).post(`/sessions/${sessionId}/interrupt`);
 }
 
+export async function getComputer(
+  apiKey: string,
+  computerId: string,
+): Promise<Computer> {
+  const res = await client(apiKey).get(`/computers/${computerId}`);
+  return res.data;
+}
+
 export async function restartComputer(
   apiKey: string,
   computerId: string,

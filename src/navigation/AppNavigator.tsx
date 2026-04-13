@@ -4,8 +4,9 @@ import {
   DarkTheme,
 } from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
+import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import React, {useEffect} from 'react';
-import {ActivityIndicator, StyleSheet, View} from 'react-native';
+import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
 import {useStore} from '../store/useStore';
 import {useThemeStore} from '../store/useThemeStore';
 import {useSettingsStore} from '../store/useSettingsStore';
@@ -14,10 +15,11 @@ import {SessionsScreen} from '../screens/SessionsScreen';
 import {ChatScreen} from '../screens/ChatScreen';
 import {NewSessionScreen} from '../screens/NewSessionScreen';
 import {SettingsScreen} from '../screens/SettingsScreen';
+import {MissionsScreen} from '../screens/MissionsScreen';
 
 export type RootStackParamList = {
   ApiKey: undefined;
-  Sessions: undefined;
+  Main: undefined;
   Chat: {
     sessionId: string;
     title?: string;
@@ -27,7 +29,69 @@ export type RootStackParamList = {
   Settings: undefined;
 };
 
+export type TabParamList = {
+  Sessions: undefined;
+  Missions: undefined;
+};
+
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const Tab = createBottomTabNavigator<TabParamList>();
+
+function TabIcon({
+  label,
+  focused,
+  color,
+}: {
+  label: string;
+  focused: boolean;
+  color: string;
+}) {
+  return <Text style={{color, fontSize: focused ? 22 : 20}}>{label}</Text>;
+}
+
+function MainTabs() {
+  const {palette} = useThemeStore();
+
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        tabBarStyle: {
+          backgroundColor: palette.surface,
+          borderTopColor: palette.border,
+        },
+        tabBarActiveTintColor: palette.accent,
+        tabBarInactiveTintColor: palette.textTertiary,
+        tabBarLabelStyle: {fontSize: 11, fontWeight: '600'},
+        headerStyle: {backgroundColor: palette.headerBg},
+        headerTintColor: palette.headerText,
+        headerTitleStyle: {fontWeight: '700'},
+        headerShadowVisible: false,
+      }}>
+      <Tab.Screen
+        name="Sessions"
+        component={SessionsScreen}
+        options={{
+          title: 'Factory',
+          tabBarLabel: 'Sessions',
+          tabBarIcon: ({focused, color}) => (
+            <TabIcon label={'\uD83D\uDCAC'} focused={focused} color={color} />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Missions"
+        component={MissionsScreen}
+        options={{
+          title: 'Missions',
+          tabBarLabel: 'Missions',
+          tabBarIcon: ({focused, color}) => (
+            <TabIcon label={'\uD83D\uDE80'} focused={focused} color={color} />
+          ),
+        }}
+      />
+    </Tab.Navigator>
+  );
+}
 
 export function AppNavigator() {
   const {apiKey, loadApiKey} = useStore();
@@ -93,9 +157,9 @@ export function AppNavigator() {
         ) : (
           <>
             <Stack.Screen
-              name="Sessions"
-              component={SessionsScreen}
-              options={{title: 'Factory'}}
+              name="Main"
+              component={MainTabs}
+              options={{headerShown: false}}
             />
             <Stack.Screen name="Chat" component={ChatScreen} />
             <Stack.Screen
