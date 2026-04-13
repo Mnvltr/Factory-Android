@@ -1,5 +1,5 @@
 import {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import React from 'react';
+import React, {useState} from 'react';
 import {
   Alert,
   ScrollView,
@@ -20,9 +20,22 @@ import {
 } from '../store/useSettingsStore';
 import {ACCENT_OPTIONS, AccentName, FontSizeKey} from '../theme/colors';
 import {RootStackParamList} from '../navigation/AppNavigator';
+import {ModelPicker} from '../components/ModelPicker';
+import {getModelLabel, findModel} from '../config/models';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Settings'>;
+};
+
+const REASONING_LABELS: Record<string, string> = {
+  dynamic: 'Auto',
+  off: 'Off',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra High',
+  max: 'Max',
 };
 
 function SectionHeader({title, palette}: {title: string; palette: any}) {
@@ -41,12 +54,14 @@ function PickerRow({
   value,
   onChange,
   palette,
+  labels,
 }: {
   label: string;
   options: readonly string[];
   value: string;
   onChange: (v: string) => void;
   palette: any;
+  labels?: Record<string, string>;
 }) {
   return (
     <View style={[styles.row, {borderBottomColor: palette.border}]}>
@@ -76,7 +91,7 @@ function PickerRow({
                   styles.chipText,
                   {color: active ? '#fff' : palette.textSecondary},
                 ]}>
-                {opt}
+                {labels?.[opt] || opt}
               </Text>
             </TouchableOpacity>
           );
@@ -91,6 +106,8 @@ export function SettingsScreen({navigation: _navigation}: Props) {
   const theme = useThemeStore();
   const settings = useSettingsStore();
   const {palette} = theme;
+  const [showModelPicker, setShowModelPicker] = useState(false);
+  const [showCustomModel, setShowCustomModel] = useState(false);
 
   function handleSignOut() {
     Alert.alert('Sign Out', 'Remove your API key and sign out?', [
@@ -102,6 +119,8 @@ export function SettingsScreen({navigation: _navigation}: Props) {
       },
     ]);
   }
+
+  const modelInfo = findModel(settings.model);
 
   return (
     <ScrollView
@@ -144,27 +163,63 @@ export function SettingsScreen({navigation: _navigation}: Props) {
         palette={palette}
       />
 
-      <SectionHeader title="FACTORY DEFAULTS" palette={palette} />
+      <SectionHeader title="MODEL" palette={palette} />
 
-      <View style={[styles.row, {borderBottomColor: palette.border}]}>
-        <RowLabel label="Model" palette={palette} />
-        <TextInput
-          style={[
-            styles.textInput,
-            {
-              backgroundColor: palette.inputBg,
-              color: palette.text,
-              borderColor: palette.border,
-            },
-          ]}
-          value={settings.model}
-          onChangeText={v => settings.update({model: v})}
-          placeholder="e.g. claude-sonnet-4-20250514"
-          placeholderTextColor={palette.textTertiary}
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-      </View>
+      <TouchableOpacity
+        style={[styles.modelRow, {borderBottomColor: palette.border}]}
+        onPress={() => setShowModelPicker(true)}
+        activeOpacity={0.7}>
+        <View style={styles.modelInfo}>
+          <Text style={[styles.rowLabel, {color: palette.text}]}>
+            {getModelLabel(settings.model)}
+          </Text>
+          {modelInfo && (
+            <Text style={[styles.modelDesc, {color: palette.textSecondary}]}>
+              {modelInfo.provider} {'\u00B7'} {modelInfo.description}
+            </Text>
+          )}
+          {!settings.model && (
+            <Text style={[styles.modelDesc, {color: palette.textTertiary}]}>
+              Tap to select a model
+            </Text>
+          )}
+        </View>
+        <Text style={[styles.chevron, {color: palette.textTertiary}]}>
+          {'\u203A'}
+        </Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.customModelRow, {borderBottomColor: palette.border}]}
+        onPress={() => setShowCustomModel(!showCustomModel)}
+        activeOpacity={0.7}>
+        <Text style={[styles.customModelLabel, {color: palette.textSecondary}]}>
+          {showCustomModel ? 'Hide custom model ID' : 'Enter custom model ID'}
+        </Text>
+      </TouchableOpacity>
+
+      {showCustomModel && (
+        <View style={[styles.row, {borderBottomColor: palette.border}]}>
+          <TextInput
+            style={[
+              styles.textInput,
+              {
+                backgroundColor: palette.inputBg,
+                color: palette.text,
+                borderColor: palette.border,
+              },
+            ]}
+            value={settings.model}
+            onChangeText={v => settings.update({model: v})}
+            placeholder="e.g. claude-sonnet-4-20250514"
+            placeholderTextColor={palette.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+        </View>
+      )}
+
+      <SectionHeader title="REASONING & BEHAVIOR" palette={palette} />
 
       <PickerRow
         label="Reasoning"
@@ -172,7 +227,15 @@ export function SettingsScreen({navigation: _navigation}: Props) {
         value={settings.reasoningEffort}
         onChange={v => settings.update({reasoningEffort: v as any})}
         palette={palette}
+        labels={REASONING_LABELS}
       />
+
+      <View style={[styles.hintRow, {borderBottomColor: palette.border}]}>
+        <Text style={[styles.hintText, {color: palette.textTertiary}]}>
+          "Auto" dynamically picks the best reasoning depth for each prompt. Use
+          "High" or "Max" for complex coding tasks.
+        </Text>
+      </View>
 
       <PickerRow
         label="Interaction"
@@ -200,8 +263,15 @@ export function SettingsScreen({navigation: _navigation}: Props) {
       </TouchableOpacity>
 
       <Text style={[styles.version, {color: palette.textTertiary}]}>
-        Factory Mobile v0.2.0
+        Factory Mobile v0.3.0
       </Text>
+
+      <ModelPicker
+        visible={showModelPicker}
+        selectedModel={settings.model}
+        onSelect={model => settings.update({model})}
+        onClose={() => setShowModelPicker(false)}
+      />
     </ScrollView>
   );
 }
@@ -233,6 +303,44 @@ const styles = StyleSheet.create({
   rowLabel: {
     fontSize: 15,
     fontWeight: '500',
+  },
+  modelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 56,
+  },
+  modelInfo: {
+    flex: 1,
+  },
+  modelDesc: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  chevron: {
+    fontSize: 24,
+    fontWeight: '300',
+    marginLeft: 8,
+  },
+  customModelRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  customModelLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  hintRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  hintText: {
+    fontSize: 12,
+    lineHeight: 17,
   },
   colorRow: {
     flexDirection: 'row',
@@ -269,13 +377,11 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    marginLeft: 12,
     borderRadius: 8,
     borderWidth: 1,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 14,
-    maxWidth: 220,
   },
   version: {
     textAlign: 'center',

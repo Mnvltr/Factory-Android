@@ -8,10 +8,12 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {listSessions, Session} from '../api/factoryApi';
+import {listSessions, quickCreateSession, Session} from '../api/factoryApi';
 import {SessionCard} from '../components/SessionCard';
 import {useStore} from '../store/useStore';
 import {useThemeStore} from '../store/useThemeStore';
+import {useSettingsStore} from '../store/useSettingsStore';
+
 type Props = {
   navigation: any;
 };
@@ -27,11 +29,13 @@ function GearButton({onPress, color}: {onPress: () => void; color: string}) {
 export function SessionsScreen({navigation}: Props) {
   const {apiKey, setApiKey} = useStore();
   const {palette, fonts} = useThemeStore();
+  const settings = useSettingsStore();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [quickStarting, setQuickStarting] = useState(false);
 
   useEffect(() => {
     navigation.setOptions({
@@ -94,6 +98,52 @@ export function SessionsScreen({navigation}: Props) {
     setLoadingMore(false);
   }
 
+  async function handleQuickStart() {
+    setQuickStarting(true);
+    try {
+      const sessionSettings: Record<string, string> = {};
+      if (settings.model) {
+        sessionSettings.model = settings.model;
+      }
+      if (settings.reasoningEffort) {
+        sessionSettings.reasoningEffort = settings.reasoningEffort;
+      }
+      if (settings.interactionMode) {
+        sessionSettings.interactionMode = settings.interactionMode;
+      }
+      if (settings.autonomyLevel) {
+        sessionSettings.autonomyLevel = settings.autonomyLevel;
+      }
+
+      const session = await quickCreateSession(
+        apiKey,
+        settings.defaultComputerId || undefined,
+        Object.keys(sessionSettings).length > 0 ? sessionSettings : undefined,
+      );
+      navigation.navigate('Chat', {
+        sessionId: session.sessionId,
+        title: session.title,
+        status: session.status,
+      });
+    } catch (e: any) {
+      if (
+        e?.message?.includes('No computers') ||
+        e?.response?.data?.detail?.includes('computer')
+      ) {
+        navigation.navigate('NewSession');
+      } else {
+        Alert.alert(
+          'Error',
+          e?.response?.data?.detail ??
+            e?.message ??
+            'Quick start failed. Try selecting a computer manually.',
+        );
+      }
+    } finally {
+      setQuickStarting(false);
+    }
+  }
+
   if (loading) {
     return (
       <View style={[styles.center, {backgroundColor: palette.bg}]}>
@@ -137,7 +187,7 @@ export function SessionsScreen({navigation}: Props) {
               No sessions yet
             </Text>
             <Text style={[styles.emptyHint, {color: palette.textTertiary}]}>
-              Tap + to start a new conversation
+              Tap the button below to start a conversation
             </Text>
           </View>
         }
@@ -154,12 +204,37 @@ export function SessionsScreen({navigation}: Props) {
           sessions.length === 0 ? styles.emptyContainer : undefined
         }
       />
-      <TouchableOpacity
-        style={[styles.fab, {backgroundColor: palette.fab}]}
-        onPress={() => navigation.navigate('NewSession')}
-        activeOpacity={0.8}>
-        <Text style={[styles.fabText, {color: palette.fabText}]}>+</Text>
-      </TouchableOpacity>
+
+      {/* FAB with long-press for manual computer selection */}
+      <View style={styles.fabContainer}>
+        <TouchableOpacity
+          style={[
+            styles.fabSecondary,
+            {backgroundColor: palette.surface, borderColor: palette.border},
+          ]}
+          onPress={() => navigation.navigate('NewSession')}
+          activeOpacity={0.7}>
+          <Text
+            style={[styles.fabSecondaryText, {color: palette.textSecondary}]}>
+            {'\uD83D\uDCBB'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.fab,
+            {backgroundColor: palette.fab},
+            quickStarting && {opacity: 0.7},
+          ]}
+          onPress={handleQuickStart}
+          disabled={quickStarting}
+          activeOpacity={0.8}>
+          {quickStarting ? (
+            <ActivityIndicator size="small" color={palette.fabText} />
+          ) : (
+            <Text style={[styles.fabText, {color: palette.fabText}]}>+</Text>
+          )}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -205,10 +280,30 @@ const styles = StyleSheet.create({
   gearIcon: {
     fontSize: 24,
   },
-  fab: {
+  fabContainer: {
     position: 'absolute',
     right: 20,
     bottom: 24,
+    alignItems: 'center',
+    gap: 12,
+  },
+  fabSecondary: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+  },
+  fabSecondaryText: {
+    fontSize: 18,
+  },
+  fab: {
     width: 56,
     height: 56,
     borderRadius: 28,

@@ -10,6 +10,8 @@ import {ActivityIndicator, StyleSheet, Text, View} from 'react-native';
 import {useStore} from '../store/useStore';
 import {useThemeStore} from '../store/useThemeStore';
 import {useSettingsStore} from '../store/useSettingsStore';
+import {useDraftStore} from '../store/useDraftStore';
+import {useOfflineQueue} from '../store/useOfflineQueue';
 import {ApiKeyScreen} from '../screens/ApiKeyScreen';
 import {SessionsScreen} from '../screens/SessionsScreen';
 import {ChatScreen} from '../screens/ChatScreen';
@@ -97,12 +99,18 @@ export function AppNavigator() {
   const {apiKey, loadApiKey} = useStore();
   const theme = useThemeStore();
   const settingsStore = useSettingsStore();
+  const draftStore = useDraftStore();
+  const offlineQueue = useOfflineQueue();
   const [ready, setReady] = React.useState(false);
 
   useEffect(() => {
-    Promise.all([loadApiKey(), theme.load(), settingsStore.load()]).finally(
-      () => setReady(true),
-    );
+    Promise.all([
+      loadApiKey(),
+      theme.load(),
+      settingsStore.load(),
+      draftStore.load(),
+      offlineQueue.load(),
+    ]).finally(() => setReady(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

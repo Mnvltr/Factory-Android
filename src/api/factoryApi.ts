@@ -171,3 +171,63 @@ export async function restartComputer(
 ): Promise<void> {
   await client(apiKey).post(`/computers/${computerId}/restart`);
 }
+
+export async function resolveComputer(
+  apiKey: string,
+  preferredId?: string,
+): Promise<Computer | null> {
+  const {computers} = await listComputers(apiKey);
+  if (computers.length === 0) {
+    return null;
+  }
+
+  if (preferredId) {
+    const preferred = computers.find(c => c.id === preferredId);
+    if (preferred && preferred.status === 'active') {
+      return preferred;
+    }
+  }
+
+  const active = computers.filter(c => c.status === 'active');
+  if (active.length > 0) {
+    const cloud = active.find(c => c.providerType === 'e2b');
+    return cloud || active[0];
+  }
+
+  const provisioning = computers.find(c => c.status === 'provisioning');
+  if (provisioning) {
+    return provisioning;
+  }
+
+  return computers[0];
+}
+
+export async function quickCreateSession(
+  apiKey: string,
+  preferredComputerId?: string,
+  sessionSettings?: SessionSettings,
+): Promise<Session> {
+  const computer = await resolveComputer(apiKey, preferredComputerId);
+  if (!computer) {
+    throw new Error(
+      'No computers available. Set up a computer in Factory first.',
+    );
+  }
+
+  if (computer.status !== 'active') {
+    try {
+      await restartComputer(apiKey, computer.id);
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const updated = await getComputer(apiKey, computer.id);
+        if (updated.status === 'active') {
+          break;
+        }
+      }
+    } catch {
+      // Continue anyway, let session creation fail naturally
+    }
+  }
+
+  return createSession(apiKey, computer.id, sessionSettings);
+}

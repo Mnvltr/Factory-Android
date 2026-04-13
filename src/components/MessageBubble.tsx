@@ -11,10 +11,49 @@ function extractText(blocks: ContentBlock[]): string {
     .join('\n');
 }
 
+function ThinkingBlock({block, palette}: {block: ContentBlock; palette: any}) {
+  const [expanded, setExpanded] = useState(false);
+  const text = block.thinking || '';
+  const isRedacted = block.type === 'redacted_thinking';
+  const preview = text.slice(0, 80);
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.thinkingBlock,
+        {
+          backgroundColor: palette.surfaceSecondary,
+          borderLeftColor: palette.accent,
+        },
+      ]}
+      onPress={() => setExpanded(!expanded)}
+      activeOpacity={0.7}>
+      <View style={styles.thinkingHeader}>
+        <Text style={[styles.thinkingLabel, {color: palette.accent}]}>
+          {isRedacted
+            ? '\uD83D\uDD12 Redacted thinking'
+            : '\uD83D\uDCA1 Thinking'}
+        </Text>
+        <Text style={[styles.expandIcon, {color: palette.textTertiary}]}>
+          {expanded ? '\u25B2' : '\u25BC'}
+        </Text>
+      </View>
+      {!isRedacted && (
+        <Text
+          style={[styles.thinkingText, {color: palette.textSecondary}]}
+          numberOfLines={expanded ? undefined : 2}>
+          {expanded ? text : preview + (text.length > 80 ? '...' : '')}
+        </Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+
 function ToolRow({block, palette}: {block: ContentBlock; palette: any}) {
   const [expanded, setExpanded] = useState(false);
-  const label =
-    block.type === 'tool_use' ? `> ${block.name ?? 'tool'}` : '< result';
+  const isUse = block.type === 'tool_use';
+  const label = isUse ? block.name ?? 'tool' : 'result';
+  const icon = isUse ? '\u25B6' : '\u25C0';
 
   return (
     <TouchableOpacity
@@ -24,13 +63,23 @@ function ToolRow({block, palette}: {block: ContentBlock; palette: any}) {
       ]}
       onPress={() => setExpanded(!expanded)}
       activeOpacity={0.7}>
-      <Text style={[styles.toolText, {color: palette.textTertiary}]}>
-        {label}
-      </Text>
-      {expanded && block.type === 'tool_use' && block.input && (
+      <View style={styles.toolHeader}>
+        <Text style={[styles.toolIcon, {color: palette.textTertiary}]}>
+          {icon}
+        </Text>
+        <Text style={[styles.toolText, {color: palette.textTertiary}]}>
+          {label}
+        </Text>
+        {isUse && block.input && (
+          <Text style={[styles.expandIcon, {color: palette.textTertiary}]}>
+            {expanded ? '\u25B2' : '\u25BC'}
+          </Text>
+        )}
+      </View>
+      {expanded && isUse && block.input && (
         <Text
           style={[styles.toolDetail, {color: palette.textTertiary}]}
-          numberOfLines={6}>
+          numberOfLines={12}>
           {JSON.stringify(block.input, null, 2)}
         </Text>
       )}
@@ -47,6 +96,9 @@ export function MessageBubble({message}: {message: Message}) {
   const toolBlocks = message.content.filter(
     b => b.type === 'tool_use' || b.type === 'tool_result',
   );
+  const thinkingBlocks = message.content.filter(
+    b => b.type === 'thinking' || b.type === 'redacted_thinking',
+  );
 
   if (!isUser && !isAssistant) {
     if (toolBlocks.length > 0) {
@@ -61,7 +113,11 @@ export function MessageBubble({message}: {message: Message}) {
     return null;
   }
 
-  if (textBlocks.length === 0 && toolBlocks.length === 0) {
+  if (
+    textBlocks.length === 0 &&
+    toolBlocks.length === 0 &&
+    thinkingBlocks.length === 0
+  ) {
     return null;
   }
 
@@ -94,6 +150,25 @@ export function MessageBubble({message}: {message: Message}) {
       fontSize: fonts.body - 2,
     },
     link: {color: isUser ? '#93c5fd' : palette.accent},
+    heading1: {
+      color: isUser ? palette.userBubbleText : palette.assistantBubbleText,
+      fontSize: fonts.body + 4,
+      fontWeight: '700' as const,
+      marginBottom: 6,
+      marginTop: 8,
+    },
+    heading2: {
+      color: isUser ? palette.userBubbleText : palette.assistantBubbleText,
+      fontSize: fonts.body + 2,
+      fontWeight: '600' as const,
+      marginBottom: 4,
+      marginTop: 6,
+    },
+    bullet_list: {paddingLeft: 4},
+    ordered_list: {paddingLeft: 4},
+    list_item: {
+      marginBottom: 4,
+    },
   };
 
   return (
@@ -102,6 +177,16 @@ export function MessageBubble({message}: {message: Message}) {
         styles.container,
         isUser ? styles.userContainer : styles.assistantContainer,
       ]}>
+      {/* Thinking blocks shown before content */}
+      {thinkingBlocks.length > 0 && (
+        <View style={styles.thinkingContainer}>
+          {thinkingBlocks.map((b, i) => (
+            <ThinkingBlock key={i} block={b} palette={palette} />
+          ))}
+        </View>
+      )}
+
+      {/* Tool blocks */}
       {toolBlocks.length > 0 && (
         <View style={styles.toolContainer}>
           {toolBlocks.map((b, i) => (
@@ -109,6 +194,8 @@ export function MessageBubble({message}: {message: Message}) {
           ))}
         </View>
       )}
+
+      {/* Text content */}
       {text.length > 0 && (
         <View
           style={[
@@ -165,6 +252,30 @@ const styles = StyleSheet.create({
   assistantBubble: {
     borderBottomLeftRadius: 6,
   },
+  thinkingContainer: {
+    marginBottom: 4,
+  },
+  thinkingBlock: {
+    borderRadius: 10,
+    borderLeftWidth: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginVertical: 2,
+  },
+  thinkingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  thinkingLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  thinkingText: {
+    fontSize: 12,
+    marginTop: 4,
+    lineHeight: 17,
+  },
   toolContainer: {
     marginHorizontal: 12,
     marginVertical: 2,
@@ -172,17 +283,30 @@ const styles = StyleSheet.create({
   toolRow: {
     borderRadius: 8,
     paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingVertical: 6,
     marginVertical: 1,
     borderLeftWidth: 3,
+  },
+  toolHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  toolIcon: {
+    fontSize: 8,
   },
   toolText: {
     fontSize: 12,
     fontFamily: 'monospace',
+    flex: 1,
+  },
+  expandIcon: {
+    fontSize: 10,
   },
   toolDetail: {
     fontSize: 11,
     fontFamily: 'monospace',
-    marginTop: 4,
+    marginTop: 6,
+    lineHeight: 16,
   },
 });

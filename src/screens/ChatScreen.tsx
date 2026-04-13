@@ -21,11 +21,15 @@ import {
   Message,
   postMessage,
   restartComputer,
+  updateSession,
 } from '../api/factoryApi';
 import {MessageBubble} from '../components/MessageBubble';
+import {QuickSettings} from '../components/QuickSettings';
 import {RootStackParamList} from '../navigation/AppNavigator';
 import {useStore} from '../store/useStore';
 import {useThemeStore} from '../store/useThemeStore';
+import {useDraftStore} from '../store/useDraftStore';
+import {useOfflineQueue} from '../store/useOfflineQueue';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Chat'>;
@@ -54,6 +58,8 @@ export function ChatScreen({navigation, route}: Props) {
   const {sessionId, title} = route.params;
   const {apiKey} = useStore();
   const {palette} = useThemeStore();
+  const draftStore = useDraftStore();
+  const offlineQueue = useOfflineQueue();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,9 +68,33 @@ export function ChatScreen({navigation, route}: Props) {
   const [sessionStatus, setSessionStatus] = useState(route.params.status);
   const [computerId, setComputerId] = useState<string | undefined>(undefined);
   const [restarting, setRestarting] = useState(false);
+  const [sessionModel, setSessionModel] = useState('');
+  const [sessionReasoning, setSessionReasoning] = useState('');
+  const [showQuickSettings, setShowQuickSettings] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const messagesRef = useRef<Message[]>([]);
+  const flatListRef = useRef<FlatList>(null);
+
+  // Load draft on mount
+  useEffect(() => {
+    const draft = draftStore.getDraft(sessionId);
+    if (draft) {
+      setText(draft);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId]);
+
+  // Persist draft on text change
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (text.trim()) {
+        draftStore.setDraft(sessionId, text);
+      }
+    }, 500);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, sessionId]);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -143,13 +173,30 @@ export function ChatScreen({navigation, route}: Props) {
             )
           : undefined,
     });
-  }, [navigation, sessionId, title, sessionStatus, handleInterrupt, palette]);
+  }, [
+    navigation,
+    sessionId,
+    title,
+    sessionStatus,
+    handleInterrupt,
+    palette,
+    sessionModel,
+  ]);
 
   useEffect(() => {
     setLoading(true);
     Promise.all([
       fetchMessages(),
-      getSession(apiKey, sessionId).then(s => setComputerId(s.computerId)),
+      getSession(apiKey, sessionId).then(s => {
+        setComputerId(s.computerId);
+        if (s.sessionSettings?.model) {
+          setSessionModel(s.sessionSettings.model);
+        }
+        if (s.sessionSettings?.reasoningEffort) {
+          setSessionReasoning(s.sessionSettings.reasoningEffort);
+        }
+      }),
+      offlineQueue.load(),
     ]).finally(() => setLoading(false));
     if (route.params.status !== 'idle') {
       startPolling();
@@ -158,19 +205,35 @@ export function ChatScreen({navigation, route}: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function handleModelChange(model: string) {
+    setSessionModel(model);
+    try {
+      await updateSession(apiKey, sessionId, {model});
+    } catch {
+      // Settings change failed silently, local state still updated
+    }
+  }
+
+  async function handleReasoningChange(reasoning: string) {
+    setSessionReasoning(reasoning);
+    try {
+      await updateSession(apiKey, sessionId, {reasoningEffort: reasoning});
+    } catch {
+      // Settings change failed silently
+    }
+  }
+
   async function ensureComputerRunning(): Promise<boolean> {
     if (!computerId) {
-      return true; // no computer to check, let the API fail naturally
+      return true;
     }
     try {
       const computer = await getComputer(apiKey, computerId);
       if (computer.status === 'active') {
         return true;
       }
-      // Try to restart it
       setRestarting(true);
       await restartComputer(apiKey, computerId);
-      // Poll computer status until active or timeout (30s)
       for (let i = 0; i < 10; i++) {
         await new Promise(r => setTimeout(r, 3000));
         const updated = await getComputer(apiKey, computerId);
@@ -180,15 +243,13 @@ export function ChatScreen({navigation, route}: Props) {
       }
       Alert.alert(
         'Timeout',
-        'Computer is still starting up. Please wait a moment and try again.',
+        'Computer is still starting up. Your message has been queued and will be sent when ready.',
       );
       return false;
     } catch (e: any) {
-      // Restart failed -- offer manual option
       Alert.alert(
         'Computer Not Ready',
-        e?.response?.data?.detail ??
-          'Could not restart the computer. Start it from the Factory web app or CLI, then try again.',
+        'Your message has been queued and will be sent when the computer is available.',
       );
       return false;
     } finally {
@@ -203,11 +264,11 @@ export function ChatScreen({navigation, route}: Props) {
     }
     setSending(true);
     setText('');
+    draftStore.clearDraft(sessionId);
 
-    // Ensure computer is active first
     const ready = await ensureComputerRunning();
     if (!ready) {
-      setText(trimmed);
+      await offlineQueue.enqueue(sessionId, trimmed);
       setSending(false);
       return;
     }
@@ -219,11 +280,26 @@ export function ChatScreen({navigation, route}: Props) {
       if (result.status !== 'idle') {
         startPolling();
       }
+      // Scroll to bottom
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({animated: true});
+      }, 200);
     } catch (e: any) {
       const status = e?.response?.status;
       const detail = e?.response?.data?.detail;
+
+      if (!e?.response) {
+        // Network error - queue for offline
+        await offlineQueue.enqueue(sessionId, trimmed);
+        Alert.alert(
+          'Offline',
+          'Message queued. It will be sent when you reconnect.',
+        );
+        setSending(false);
+        return;
+      }
+
       if (status === 503 || status === 502) {
-        // Computer likely went down between check and send -- try restart
         const retryReady = await ensureComputerRunning();
         if (retryReady) {
           try {
@@ -236,7 +312,7 @@ export function ChatScreen({navigation, route}: Props) {
             setSending(false);
             return;
           } catch {
-            // fall through to generic error
+            // fall through
           }
         }
       }
@@ -252,8 +328,23 @@ export function ChatScreen({navigation, route}: Props) {
     }
   }
 
+  // Process queued messages when session becomes idle
+  useEffect(() => {
+    if (sessionStatus === 'idle') {
+      const queued = offlineQueue.getSessionQueue(sessionId);
+      if (queued.length > 0) {
+        offlineQueue.processQueue(apiKey).then(() => {
+          fetchMessages();
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStatus]);
+
   const isThinking =
     sessionStatus === 'running' || sessionStatus === 'pending' || restarting;
+
+  const queuedMessages = offlineQueue.getSessionQueue(sessionId);
 
   if (loading) {
     return (
@@ -269,34 +360,85 @@ export function ChatScreen({navigation, route}: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={80}>
       <FlatList
+        ref={flatListRef}
         data={messages}
         keyExtractor={m => m.id}
         renderItem={({item}) => <MessageBubble message={item} />}
         contentContainerStyle={styles.messageList}
+        onContentSizeChange={() => {
+          flatListRef.current?.scrollToEnd({animated: false});
+        }}
         ListEmptyComponent={
           <View style={styles.emptyChat}>
+            <Text style={[styles.emptyChatIcon, {color: palette.textTertiary}]}>
+              {'\uD83D\uDCAC'}
+            </Text>
             <Text style={[styles.emptyChatText, {color: palette.textTertiary}]}>
               Send a message to start the conversation
             </Text>
+            <TouchableOpacity
+              style={styles.quickSettingsHint}
+              onPress={() => setShowQuickSettings(!showQuickSettings)}>
+              <Text style={[styles.hintText, {color: palette.accent}]}>
+                Tap to configure model & reasoning
+              </Text>
+            </TouchableOpacity>
           </View>
         }
         ListFooterComponent={
-          isThinking ? (
-            <View style={styles.thinkingRow}>
-              <ActivityIndicator size="small" color={palette.accent} />
-              <Text
-                style={[styles.thinkingText, {color: palette.textSecondary}]}>
-                {restarting ? 'Restarting computer...' : 'Droid is thinking...'}
-              </Text>
-            </View>
-          ) : null
+          <>
+            {queuedMessages.length > 0 && (
+              <View
+                style={[
+                  styles.queueBanner,
+                  {backgroundColor: palette.surfaceSecondary},
+                ]}>
+                <Text
+                  style={[styles.queueText, {color: palette.textSecondary}]}>
+                  {queuedMessages.length} message(s) queued
+                </Text>
+              </View>
+            )}
+            {isThinking ? (
+              <View style={styles.thinkingRow}>
+                <ActivityIndicator size="small" color={palette.accent} />
+                <Text
+                  style={[styles.thinkingText, {color: palette.textSecondary}]}>
+                  {restarting ? 'Starting computer...' : 'Droid is thinking...'}
+                </Text>
+              </View>
+            ) : null}
+          </>
         }
       />
+
+      {(showQuickSettings || messages.length === 0) && (
+        <QuickSettings
+          sessionModel={sessionModel}
+          sessionReasoning={sessionReasoning}
+          onChangeModel={handleModelChange}
+          onChangeReasoning={handleReasoningChange}
+        />
+      )}
+
       <View
         style={[
           styles.inputBar,
           {backgroundColor: palette.surface, borderTopColor: palette.border},
         ]}>
+        <TouchableOpacity
+          style={[
+            styles.settingsToggle,
+            {backgroundColor: palette.surfaceSecondary},
+          ]}
+          onPress={() => setShowQuickSettings(!showQuickSettings)}
+          activeOpacity={0.7}>
+          <Text
+            style={[styles.settingsToggleText, {color: palette.textSecondary}]}>
+            {'\u2699'}
+          </Text>
+        </TouchableOpacity>
+
         <TextInput
           style={[
             styles.textInput,
@@ -308,7 +450,7 @@ export function ChatScreen({navigation, route}: Props) {
           placeholderTextColor={palette.textTertiary}
           multiline
           maxLength={10000}
-          editable={!isThinking && !sending}
+          editable={!sending}
         />
         <TouchableOpacity
           style={[
@@ -319,7 +461,7 @@ export function ChatScreen({navigation, route}: Props) {
             },
           ]}
           onPress={handleSend}
-          disabled={!text.trim() || isThinking || sending}>
+          disabled={!text.trim() || sending}>
           <Text
             style={[
               styles.sendBtnText,
@@ -354,10 +496,35 @@ const styles = StyleSheet.create({
   emptyChat: {
     alignItems: 'center',
     paddingTop: 60,
+    gap: 12,
+  },
+  emptyChatIcon: {
+    fontSize: 48,
   },
   emptyChatText: {
     fontSize: 14,
     fontStyle: 'italic',
+  },
+  quickSettingsHint: {
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  hintText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  queueBanner: {
+    marginHorizontal: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  queueText: {
+    fontSize: 12,
+    fontWeight: '500',
+    textAlign: 'center',
   },
   thinkingRow: {
     flexDirection: 'row',
@@ -373,10 +540,21 @@ const styles = StyleSheet.create({
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
-    gap: 8,
+    gap: 6,
+  },
+  settingsToggle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 3,
+  },
+  settingsToggleText: {
+    fontSize: 18,
   },
   textInput: {
     flex: 1,
@@ -393,6 +571,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
+    marginBottom: 2,
   },
   sendBtnText: {
     fontSize: 18,

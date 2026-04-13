@@ -9,11 +9,17 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {Computer, createSession, listComputers} from '../api/factoryApi';
+import {
+  Computer,
+  createSession,
+  listComputers,
+  quickCreateSession,
+} from '../api/factoryApi';
 import {useStore} from '../store/useStore';
 import {useThemeStore} from '../store/useThemeStore';
 import {useSettingsStore} from '../store/useSettingsStore';
 import {RootStackParamList} from '../navigation/AppNavigator';
+import {getModelLabel} from '../config/models';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'NewSession'>;
@@ -32,6 +38,7 @@ export function NewSessionScreen({navigation}: Props) {
   const [computers, setComputers] = useState<Computer[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState<string | null>(null);
+  const [quickStarting, setQuickStarting] = useState(false);
 
   const fetchComputers = useCallback(async () => {
     try {
@@ -50,6 +57,50 @@ export function NewSessionScreen({navigation}: Props) {
     fetchComputers().finally(() => setLoading(false));
   }, [fetchComputers]);
 
+  function buildSessionSettings() {
+    const sessionSettings: Record<string, string> = {};
+    if (settings.model) {
+      sessionSettings.model = settings.model;
+    }
+    if (settings.reasoningEffort) {
+      sessionSettings.reasoningEffort = settings.reasoningEffort;
+    }
+    if (settings.interactionMode) {
+      sessionSettings.interactionMode = settings.interactionMode;
+    }
+    if (settings.autonomyLevel) {
+      sessionSettings.autonomyLevel = settings.autonomyLevel;
+    }
+    return Object.keys(sessionSettings).length > 0
+      ? sessionSettings
+      : undefined;
+  }
+
+  async function handleQuickStart() {
+    setQuickStarting(true);
+    try {
+      const session = await quickCreateSession(
+        apiKey,
+        settings.defaultComputerId || undefined,
+        buildSessionSettings(),
+      );
+      navigation.replace('Chat', {
+        sessionId: session.sessionId,
+        title: session.title,
+        status: session.status,
+      });
+    } catch (e: any) {
+      Alert.alert(
+        'Error',
+        e?.response?.data?.detail ??
+          e?.message ??
+          'Failed to create session. Please select a computer manually.',
+      );
+    } finally {
+      setQuickStarting(false);
+    }
+  }
+
   async function handleSelect(computer: Computer) {
     if (computer.status !== 'active') {
       Alert.alert(
@@ -63,24 +114,10 @@ export function NewSessionScreen({navigation}: Props) {
 
     setCreating(computer.id);
     try {
-      const sessionSettings: Record<string, string> = {};
-      if (settings.model) {
-        sessionSettings.model = settings.model;
-      }
-      if (settings.reasoningEffort) {
-        sessionSettings.reasoningEffort = settings.reasoningEffort;
-      }
-      if (settings.interactionMode) {
-        sessionSettings.interactionMode = settings.interactionMode;
-      }
-      if (settings.autonomyLevel) {
-        sessionSettings.autonomyLevel = settings.autonomyLevel;
-      }
-
       const session = await createSession(
         apiKey,
         computer.id,
-        Object.keys(sessionSettings).length > 0 ? sessionSettings : undefined,
+        buildSessionSettings(),
       );
       navigation.replace('Chat', {
         sessionId: session.sessionId,
@@ -97,6 +134,8 @@ export function NewSessionScreen({navigation}: Props) {
     }
   }
 
+  const hasActiveComputer = computers.some(c => c.status === 'active');
+
   if (loading) {
     return (
       <View style={[styles.center, {backgroundColor: palette.bg}]}>
@@ -107,9 +146,38 @@ export function NewSessionScreen({navigation}: Props) {
 
   return (
     <View style={[styles.root, {backgroundColor: palette.bg}]}>
+      {/* Quick Start Button */}
+      {hasActiveComputer && (
+        <TouchableOpacity
+          style={[styles.quickStartBtn, {backgroundColor: palette.accent}]}
+          onPress={handleQuickStart}
+          disabled={quickStarting || creating !== null}
+          activeOpacity={0.8}>
+          {quickStarting ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Text style={styles.quickStartIcon}>{'\u26A1'}</Text>
+              <View style={styles.quickStartContent}>
+                <Text style={styles.quickStartTitle}>Quick Start</Text>
+                <Text style={styles.quickStartSub}>
+                  Auto-select best computer
+                  {settings.model
+                    ? ` \u00B7 ${getModelLabel(settings.model)}`
+                    : ''}
+                </Text>
+              </View>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
+
       <Text style={[styles.heading, {color: palette.textSecondary}]}>
-        Select a computer to start a new session
+        {hasActiveComputer
+          ? 'Or select a specific computer'
+          : 'Select a computer to start a new session'}
       </Text>
+
       <FlatList
         data={computers}
         keyExtractor={item => item.id}
@@ -130,7 +198,7 @@ export function NewSessionScreen({navigation}: Props) {
                 },
               ]}
               onPress={() => handleSelect(item)}
-              disabled={isCreating || creating !== null}
+              disabled={isCreating || creating !== null || quickStarting}
               activeOpacity={0.7}>
               <View style={styles.computerRow}>
                 <View
@@ -178,11 +246,15 @@ export function NewSessionScreen({navigation}: Props) {
         }}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
+            <Text style={[styles.emptyIcon, {color: palette.textTertiary}]}>
+              {'\uD83D\uDCBB'}
+            </Text>
             <Text style={[styles.emptyText, {color: palette.textSecondary}]}>
-              No computers found.
+              No computers found
             </Text>
             <Text style={[styles.emptyHint, {color: palette.textTertiary}]}>
-              Set up a computer in the Factory web app or CLI first.
+              Set up a computer in the Factory web app or CLI.{'\n'}
+              Cloud computers start automatically.
             </Text>
           </View>
         }
@@ -200,6 +272,36 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  quickStartBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 14,
+    padding: 16,
+    gap: 12,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  quickStartIcon: {
+    fontSize: 24,
+  },
+  quickStartContent: {
+    flex: 1,
+  },
+  quickStartTitle: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+  },
+  quickStartSub: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    marginTop: 2,
   },
   heading: {
     fontSize: 14,
@@ -258,6 +360,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 60,
   },
+  emptyIcon: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
   emptyText: {
     fontSize: 16,
     fontWeight: '600',
@@ -267,5 +373,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     paddingHorizontal: 24,
+    lineHeight: 20,
   },
 });
